@@ -1,62 +1,78 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
+const { RateLimiter } = require('socketio-rate-limiter');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: { origin: '*' } // 개발용, 프로덕션에서는 제한
-});
+const io = socketIo(server, { cors: { origin: process.env.NODE_ENV === 'production' ? 'https://global-chat-pkiu.onrender.com' : '*' } });
 
 const PORT = process.env.PORT || 3000;
-const MAX_USERS = 50; // 최대 동시 접속자
+const MAX_USERS = 50;
 let currentUsers = 0;
-const waitingQueue = []; // 대기열 (socket 배열)
+const waitingQueue = [];
 
-// 정적 파일 서빙 (index.html)
-app.use(express.static(__dirname));
+// 레이트 리미팅 (1분당 5 메시지)
+const rateLimiter = RateLimiter({ points: 5, duration: 60 });
+
+// 인증 미들웨어
+const authMiddleware = (socket, next) => {
+  const token = socket.handshake.auth.token;
+  if (!token) return next(new Error('Authentication required'));
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.user = decoded;
+    next();
+  } catch (err) {
+    next(new Error('Invalid token'));
+  }
+};
+
+io.use(authMiddleware).use(rateLimiter);
 
 io.on('connection', (socket) => {
   if (currentUsers >= MAX_USERS) {
-    // 대기열 추가
     waitingQueue.push(socket);
     socket.emit('waiting', { position: waitingQueue.length });
-    console.log(`User added to queue. Queue length: ${waitingQueue.length}`);
     return;
   }
 
-  // 연결 허용
   currentUsers++;
-  socket.emit('connected');
-  console.log(`User connected. Current users: ${currentUsers}`);
+  socket.emit('connected', { userId: socket.user.id });
 
-  // 메시지 수신 및 브로드캐스트
+  // 메시지 처리
   socket.on('chat message', (msg) => {
-    io.emit('chat message', msg); // 모든 클라이언트에 브로드캐스트
+    if (typeof msg !== 'string' || msg.length > 200) return;
+    const sanitizedMsg = msg.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    io.emit('chat message', { content: sanitizedMsg, userId: socket.user.id });
   });
 
-  // 랜덤 문구 봇 (연결 시 랜덤으로 보내기, 확률 20%)
-  if (Math.random() < 0.2) {
-    const randomPhrases = ['Hello from the void!', 'Whispers in the wind...', 'Echoes of thoughts...'];
+  // 랜덤 문구 (10% 확률)
+  if (Math.random() < 0.1) {
+    const randomPhrases = ['Echoes in the void...', 'Whispers of thoughts...', 'Lost in the stream...'];
     const randomMsg = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
-    io.emit('chat message', randomMsg);
+    io.emit('chat message', { content: randomMsg, userId: 'bot' });
   }
 
-  // 연결 해제
   socket.on('disconnect', () => {
     currentUsers--;
-    console.log(`User disconnected. Current users: ${currentUsers}`);
-
-    // 대기열에서 다음 사용자 연결
     if (waitingQueue.length > 0) {
       const nextSocket = waitingQueue.shift();
-      nextSocket.emit('connected');
+      nextSocket.emit('connected', { userId: nextSocket.user.id });
       currentUsers++;
-      console.log(`User from queue connected. Queue length: ${waitingQueue.length}`);
     }
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+app.use(express.json());
+app.use(express.static('public'));
+app.post('/login', (req, res) => {
+  const { nickname } = req.body;
+  if (!nickname || nickname.length > 20) return res.status(400).json({ error: 'Invalid nickname' });
+  const token = jwt.sign({ id: nickname }, process.env.JWT_SECRET, { expiresIn: '1d' });
+  res.json({ token });
 });
+
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

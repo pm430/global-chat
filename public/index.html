@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Fade Chat</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, Arial, sans-serif; background: #121212; color: #fff; height: 100vh; display: flex; flex-direction: column; }
+    #login-container { display: flex; justify-content: center; align-items: center; height: 100%; background: #1e1e1e; }
+    #login-form { display: flex; flex-direction: column; gap: 10px; padding: 20px; background: #222; border-radius: 10px; }
+    #login-input { padding: 10px; border: none; background: #333; color: #fff; border-radius: 5px; }
+    #login-button { background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; }
+    #chat-container { flex: 1; position: relative; overflow: hidden; display: none; }
+    #form { background: #1e1e1e; padding: 10px; display: flex; display: none; }
+    #input { flex: 1; padding: 10px; border: none; background: #333; color: #fff; border-radius: 5px; margin-right: 10px; }
+    #button { background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; }
+    .message { 
+      position: absolute; padding: 12px; background: rgba(255,255,255,0.15); border-radius: 8px; max-width: 250px; 
+      box-shadow: 0 3px 10px rgba(0,0,0,0.4); animation: fadeOut 5s forwards; transition: transform 0.2s ease-in-out; 
+    }
+    .message:hover { transform: scale(1.05); }
+    .my-message { background: rgba(76, 175, 80, 0.3); color: #4CAF50; font-weight: 600; }
+    .bot-message { background: rgba(100, 100, 100, 0.3); color: #888; font-style: italic; }
+    @keyframes fadeOut { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+    #status { text-align: center; padding: 15px; color: #888; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="login-container">
+    <form id="login-form">
+      <input id="login-input" placeholder="Enter your nickname" required />
+      <button id="login-button">Join Chat</button>
+    </form>
+  </div>
+  <div id="chat-container"></div>
+  <form id="form">
+    <input id="input" autocomplete="off" placeholder="Type your thought..." />
+    <button id="button">Send</button>
+  </form>
+  <div id="status"></div>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const loginContainer = document.getElementById('login-container');
+    const loginForm = document.getElementById('login-form');
+    const loginInput = document.getElementById('login-input');
+    const chatContainer = document.getElementById('chat-container');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const status = document.getElementById('status');
+    let socket, userId;
+
+    // localStorage로 메시지 관리
+    function saveMessage(message) {
+      const messages = JSON.parse(localStorage.getItem('messages') || '[]');
+      messages.unshift(message);
+      if (messages.length > 10) messages.pop();
+      localStorage.setItem('messages', JSON.stringify(messages));
+    }
+
+    function loadMessages() {
+      const messages = JSON.parse(localStorage.getItem('messages') || '[]');
+      messages.forEach(displayMessage);
+    }
+
+    // 로그인 처리
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nickname = loginInput.value.trim();
+      if (!nickname) return;
+      const res = await fetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname })
+      });
+      const { token } = await res.json();
+      localStorage.setItem('token', token);
+      localStorage.setItem('nickname', nickname); // 닉네임 저장
+      loginInput.value = nickname; // 재접속 시 자동 입력
+      connectSocket(token);
+    });
+
+    function connectSocket(token) {
+      socket = io({ auth: { token } });
+      setupSocketEvents();
+      loginContainer.style.display = 'none';
+      chatContainer.style.display = 'block';
+      form.style.display = 'flex';
+      loadMessages();
+    }
+
+    function setupSocketEvents() {
+      socket.on('connected', (data) => {
+        userId = data.userId;
+        status.innerText = `Connected as ${userId}`;
+      });
+
+      socket.on('waiting', (data) => {
+        status.innerText = `Waiting in queue... Position: ${data.position}`;
+      });
+
+      socket.on('chat message', (message) => {
+        saveMessage(message);
+        displayMessage(message);
+      });
+
+      socket.on('error', (err) => {
+        status.innerText = `Error: ${err.message}`;
+      });
+
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (input.value) {
+          socket.emit('chat message', input.value);
+          input.value = '';
+        }
+      });
+    }
+
+    function displayMessage({ content, userId: senderId }) {
+      const messageDiv = document.createElement('div');
+      messageDiv.classList.add('message');
+      messageDiv.innerHTML = content;
+      if (senderId === userId) messageDiv.classList.add('my-message');
+      if (senderId === 'bot') messageDiv.classList.add('bot-message');
+      const x = Math.random() * (window.innerWidth - 250);
+      const y = Math.random() * (window.innerHeight - 100 - 50);
+      messageDiv.style.left = `${x}px`;
+      messageDiv.style.top = `${y}px`;
+      chatContainer.appendChild(messageDiv);
+      setTimeout(() => messageDiv.remove(), 5000);
+    }
+
+    // 기존 토큰/닉네임 확인
+    const token = localStorage.getItem('token');
+    const nickname = localStorage.getItem('nickname');
+    if (token && nickname) {
+      loginInput.value = nickname;
+      connectSocket(token);
+    }
+  </script>
+</body>
+</html>
