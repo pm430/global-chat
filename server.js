@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const { RateLimiter } = require('socketio-rate-limiter');
 const jwt = require('jsonwebtoken');
 
 const app = express();
@@ -14,8 +13,22 @@ const MAX_USERS = 50;
 let currentUsers = 0;
 const waitingQueue = [];
 
-// 레이트 리미팅 (1분당 5 메시지)
-const rateLimiter = RateLimiter({ points: 5, duration: 60 });
+// 인메모리 레이트 리미팅 (사용자별 1분당 5 메시지)
+const rateLimitStore = new Map(); // { userId: { count: number, resetTime: timestamp } }
+const RATE_LIMIT = 5; // 1분당 최대 메시지
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1분
+
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const userLimit = rateLimitStore.get(userId) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+  if (now > userLimit.resetTime) {
+    userLimit.count = 0;
+    userLimit.resetTime = now + RATE_LIMIT_WINDOW;
+  }
+  userLimit.count++;
+  rateLimitStore.set(userId, userLimit);
+  return userLimit.count <= RATE_LIMIT;
+}
 
 // 인증 미들웨어
 const authMiddleware = (socket, next) => {
@@ -30,27 +43,33 @@ const authMiddleware = (socket, next) => {
   }
 };
 
-io.use(authMiddleware).use(rateLimiter);
+io.use(authMiddleware);
 
 io.on('connection', (socket) => {
   if (currentUsers >= MAX_USERS) {
     waitingQueue.push(socket);
     socket.emit('waiting', { position: waitingQueue.length });
+    console.log(`User added to queue. Queue length: ${waitingQueue.length}`);
     return;
   }
 
   currentUsers++;
   socket.emit('connected', { userId: socket.user.id });
+  console.log(`User connected. Current users: ${currentUsers}`);
 
   // 메시지 처리
   socket.on('chat message', (msg) => {
-    if (typeof msg !== 'string' || msg.length > 200) return;
+    if (typeof msg !== 'string' || msg.length > 100) return; // 200자 → 100자 제한
+    if (!checkRateLimit(socket.user.id)) {
+      socket.emit('error', { message: 'Rate limit exceeded. Try again later.' });
+      return;
+    }
     const sanitizedMsg = msg.replace(/</g, '&lt;').replace(/>/g, '&gt;');
     io.emit('chat message', { content: sanitizedMsg, userId: socket.user.id });
   });
 
-  // 랜덤 문구 (10% 확률)
-  if (Math.random() < 0.1) {
+  // 랜덤 문구 (5% 확률)
+  if (Math.random() < 0.05) {
     const randomPhrases = ['Echoes in the void...', 'Whispers of thoughts...', 'Lost in the stream...'];
     const randomMsg = randomPhrases[Math.floor(Math.random() * randomPhrases.length)];
     io.emit('chat message', { content: randomMsg, userId: 'bot' });
@@ -58,10 +77,13 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     currentUsers--;
+    rateLimitStore.delete(socket.user.id); // 레이트 리미팅 데이터 정리
+    console.log(`User disconnected. Current users: ${currentUsers}`);
     if (waitingQueue.length > 0) {
       const nextSocket = waitingQueue.shift();
       nextSocket.emit('connected', { userId: nextSocket.user.id });
       currentUsers++;
+      console.log(`User from queue connected. Queue length: ${waitingQueue.length}`);
     }
   });
 });

@@ -23,6 +23,7 @@
     .bot-message { background: rgba(100, 100, 100, 0.3); color: #888; font-style: italic; }
     @keyframes fadeOut { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
     #status { text-align: center; padding: 15px; color: #888; font-size: 14px; }
+    .error { color: #ff4444; }
   </style>
 </head>
 <body>
@@ -75,8 +76,8 @@
       });
       const { token } = await res.json();
       localStorage.setItem('token', token);
-      localStorage.setItem('nickname', nickname); // 닉네임 저장
-      loginInput.value = nickname; // 재접속 시 자동 입력
+      localStorage.setItem('nickname', nickname);
+      loginInput.value = nickname;
       connectSocket(token);
     });
 
@@ -106,6 +107,11 @@
 
       socket.on('error', (err) => {
         status.innerText = `Error: ${err.message}`;
+        status.classList.add('error');
+        setTimeout(() => {
+          status.classList.remove('error');
+          status.innerText = `Connected as ${userId}`;
+        }, 3000);
       });
 
       form.addEventListener('submit', (e) => {
@@ -118,6 +124,7 @@
     }
 
     function displayMessage({ content, userId: senderId }) {
+      if (chatContainer.children.length > 50) return; // 최대 50개 메시지 표시
       const messageDiv = document.createElement('div');
       messageDiv.classList.add('message');
       messageDiv.innerHTML = content;
