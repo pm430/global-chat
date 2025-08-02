@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Global Fade Chat</title>
+  <style>
+    body { 
+      margin: 0; font-family: Arial, sans-serif; background: #121212; color: #fff; height: 100vh; display: flex; flex-direction: column; 
+    }
+    #chat-container { flex: 1; position: relative; overflow: hidden; }
+    #form { background: #1e1e1e; padding: 10px; display: flex; }
+    #input { flex: 1; padding: 10px; border: none; background: #333; color: #fff; border-radius: 5px; margin-right: 10px; }
+    #button { background: #4CAF50; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; }
+    .message { 
+      position: absolute; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 10px; max-width: 200px; 
+      animation: fadeOut 5s forwards; transition: opacity 0.5s; 
+    }
+    .my-message { font-weight: bold; color: #4CAF50; } /* 본인 메시지 구분 */
+    @keyframes fadeOut { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+    #status { text-align: center; padding: 20px; color: #888; }
+  </style>
+</head>
+<body>
+  <div id="chat-container"></div>
+  <form id="form">
+    <input id="input" autocomplete="off" placeholder="Type your thought..." />
+    <button id="button">Send</button>
+  </form>
+  <div id="status"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const chatContainer = document.getElementById('chat-container');
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const status = document.getElementById('status');
+
+    socket.on('waiting', (data) => {
+      status.innerText = `Waiting in queue... Position: ${data.position}`;
+    });
+
+    socket.on('connected', () => {
+      status.innerText = 'Connected! Share your thoughts.';
+    });
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (input.value) {
+        socket.emit('chat message', input.value);
+        input.value = '';
+      }
+    });
+
+    socket.on('chat message', (msg) => {
+      const messageDiv = document.createElement('div');
+      messageDiv.classList.add('message');
+      messageDiv.innerText = msg;
+
+      // 랜덤 위치
+      const x = Math.random() * (window.innerWidth - 200);
+      const y = Math.random() * (window.innerHeight - 100 - 50); // 입력폼 위쪽
+      messageDiv.style.left = `${x}px`;
+      messageDiv.style.top = `${y}px`;
+
+      // 본인 메시지 구분 (서버에서 식별 불가하니, 클라이언트에서 최근 emit 후 클래스 추가 – 간단 구현)
+      if (msg === input.dataset.lastMsg) { // 마지막 보낸 메시지 체크
+        messageDiv.classList.add('my-message');
+      }
+      input.dataset.lastMsg = msg; // 업데이트
+
+      chatContainer.appendChild(messageDiv);
+
+      // 사라진 후 제거
+      setTimeout(() => { messageDiv.remove(); }, 5000);
+    });
+  </script>
+</body>
+</html>
